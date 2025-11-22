@@ -3,139 +3,179 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firestore/firebase";
+import QRCode from "qrcode";
 import {
   collection,
   getDocs,
   deleteDoc,
   doc,
-  setDoc,
-  serverTimestamp,
+  getDoc,
 } from "firebase/firestore";
+
+import { createOrder } from "@/lib/firestore/orders/createOrder";
+
+const uploadedFilePath = "/mnt/data/0422dea7-746c-4049-9be8-48746550876c.png";
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const productId = searchParams ? searchParams.get("productId") : null;
   const { user } = useAuth();
 
   const [cart, setCart] = useState([]);
   const [paymentMethod, setPaymentMethod] = useState("card");
   const [showPopup, setShowPopup] = useState(false);
+  const [qrCodeURL, setQrCodeURL] = useState("");
 
-  // Billing fields
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [fullAddress, setFullAddress] = useState("");
 
-  // --------------------------------------------------
-  // Fetch Cart Items
-  // --------------------------------------------------
+  const [loading, setLoading] = useState(false);
+
   const fetchCart = async () => {
     if (!user) return;
 
+    if (productId) {
+      const snap = await getDocs(collection(db, "products"));
+      const products = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      const product = products.find((p) => p.id === productId);
+
+      if (product) {
+        setCart([{ ...product, quantity: 1 }]);
+      }
+      return;
+    }
+
     const cartRef = collection(db, "users", user.uid, "cart");
     const snap = await getDocs(cartRef);
-
     const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     setCart(items);
   };
 
   useEffect(() => {
     fetchCart();
-  }, [user]);
+  }, [user, productId]);
 
-  // --------------------------------------------------
-  // Price Calculations
-  // --------------------------------------------------
+  // ---------------------------
+  // PRICE LOGIC
+  // ---------------------------
   const itemsTotal = cart.reduce(
-    (sum, item) => sum + item.price * item.quantity,
+    (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
     0
   );
-  const deliveryCharge = itemsTotal > 0 ? 40 : 0;
+
+  const productCount = cart.reduce(
+    (sum, item) => sum + (item.quantity || 1),
+    0
+  );
+
+  const deliveryCharge = productCount < 3 ? 50 : 0;
+
   const total = itemsTotal + deliveryCharge;
 
-  // --------------------------------------------------
-  // SAVE ORDER TO FIRESTORE
-  // --------------------------------------------------
-  const saveOrder = async () => {
-    const orderId = Date.now().toString(); // unique order id
+  // ---------------------------
+  // GENERATE UPI QR
+  // ---------------------------
+  useEffect(() => {
+    if (paymentMethod !== "upi" || total <= 0) return;
 
-    await setDoc(doc(db, "orders", orderId), {
-      orderId: orderId,
-      userId: user.uid,
-      paymentMethod: paymentMethod,
-      total: total,
-      deliveryCharge: deliveryCharge,
-      itemsTotal: itemsTotal,
-      createdAt: serverTimestamp(),
+    const upiID = "9104880776@fam";
+    const merchantName = "Super Mall";
 
-      // Billing details
-      address: {
-        fullName,
-        phone,
-        email,
-        fullAddress,
-      },
+    const upiLink = `upi://pay?pa=${upiID}&pn=${merchantName}&am=${total}&cu=INR`;
 
-      // Cart items
-      items: cart,
-    });
-  };
+    QRCode.toDataURL(upiLink).then(setQrCodeURL);
+  }, [paymentMethod, total]);
 
-  // --------------------------------------------------
-  // Clear Cart After Payment
-  // --------------------------------------------------
   const clearCart = async () => {
-    if (!user) return;
+    if (productId) return;
 
     const cartRef = collection(db, "users", user.uid, "cart");
     const snap = await getDocs(cartRef);
 
-    const deletePromises = snap.docs.map((d) =>
-      deleteDoc(doc(db, "users", user.uid, "cart", d.id))
+    await Promise.all(
+      snap.docs.map((d) => deleteDoc(doc(db, "users", user.uid, "cart", d.id)))
+    );
+  };
+
+  const placeOrder = async () => {
+    if (!user) throw new Error("User not authenticated");
+
+    const itemsWithShopId = await Promise.all(
+      cart.map(async (item) => {
+        const productRef = doc(db, "products", item.id);
+        const productSnap = await getDoc(productRef);
+        const productData = productSnap.data();
+
+        return {
+          id: item.id,
+          name: item.name || "Product",
+          price: item.price,
+          quantity: item.quantity,
+          shopId: productData?.shopId || null,
+        };
+      })
     );
 
-    await Promise.all(deletePromises);
+    const mainShopId = itemsWithShopId[0]?.shopId || null;
+
+    const meta = {
+      paymentMethod,
+      deliveryCharge,
+      itemsTotal,
+      address: { fullName, phone, email, fullAddress },
+      uploadedFilePath,
+    };
+
+    const orderId = await createOrder({
+      userId: user.uid,
+      items: itemsWithShopId,
+      total,
+      shopId: mainShopId,
+      meta,
+    });
+
+    return orderId;
   };
 
-  // --------------------------------------------------
-  // Handle Payment
-  // --------------------------------------------------
   const handlePayNow = async () => {
-    if (cart.length === 0) {
-      alert("Your cart is empty.");
-      return;
-    }
-
     if (!fullName || !phone || !email || !fullAddress) {
-      alert("Please fill all billing details.");
+      alert("Fill all billing details.");
       return;
     }
 
-    // 1️⃣ Save order to Firestore
-    await saveOrder();
+    if (!cart.length) {
+      alert("Cart is empty.");
+      return;
+    }
 
-    // 2️⃣ Clear cart
-    await clearCart();
+    setLoading(true);
+    try {
+      const orderId = await placeOrder();
+      await clearCart();
 
-    // 3️⃣ Show success popup
-    setShowPopup(true);
-
-    // 4️⃣ Redirect
-    setTimeout(() => {
-      setShowPopup(false);
-      router.push("/");
-    }, 2000);
+      setShowPopup(true);
+      setTimeout(() => {
+        setShowPopup(false);
+        router.push(`/`);
+      }, 1200);
+    } catch (err) {
+      console.error(err);
+      alert("Order failed: " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // --------------------------------------------------
-  // If not logged in
-  // --------------------------------------------------
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center text-xl text-gray-700">
+      <div className="min-h-screen flex items-center justify-center text-xl">
         Please login to checkout.
       </div>
     );
@@ -143,112 +183,163 @@ export default function CheckoutPage() {
 
   return (
     <div className="min-h-screen bg-gray-100 py-10 px-4">
-      {/* POPUP */}
       {showPopup && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-80 text-center animate-fadeIn">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl shadow text-center">
             <h2 className="text-xl font-semibold text-green-600">
               Payment Successful 🎉
             </h2>
-            <p className="mt-2 text-gray-600">Redirecting to home...</p>
+            <p className="mt-2">Redirecting...</p>
           </div>
         </div>
       )}
 
-      <div className="max-w-5xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-10">
-        {/* Back */}
+      <div className="max-w-5xl mx-auto bg-white p-8 rounded-xl shadow">
         <Link
-          href="/cart"
-          className="inline-flex items-center gap-2 text-gray-700 hover:text-black transition mb-6"
+          href={productId ? `/product/${productId}` : "/cart"}
+          className="flex items-center gap-2 text-gray-700 mb-6"
         >
-          <ArrowLeft className="w-5 h-5" />
-          <span className="text-sm font-medium">Back to Cart</span>
+          <ArrowLeft />
+          <span>Back</span>
         </Link>
 
-        <h2 className="text-2xl md:text-3xl font-semibold mb-8">Checkout</h2>
+        <h2 className="text-3xl font-bold mb-8">Checkout</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-          {/* LEFT SECTION */}
+          {/* LEFT SIDE */}
           <div className="md:col-span-2 space-y-8">
-            {/* Billing Details */}
-            <div className="bg-gray-50 p-5 rounded-xl border">
+            {/* BILLING */}
+            <div className="bg-gray-50 p-5 border rounded-xl">
               <h3 className="text-xl font-semibold mb-5">Billing Details</h3>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4">
                 <input
-                  type="text"
+                  className="border p-3 rounded-lg"
                   placeholder="Full Name"
-                  className="border p-3 rounded-lg w-full"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                 />
+
                 <input
-                  type="text"
+                  className="border p-3 rounded-lg"
                   placeholder="Phone Number"
-                  className="border p-3 rounded-lg w-full"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                 />
               </div>
 
               <input
-                type="email"
-                placeholder="Email Address"
                 className="border p-3 rounded-lg w-full mt-4"
+                placeholder="Email Address"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
               />
 
               <textarea
-                rows="3"
-                placeholder="Full Address"
+                rows={3}
                 className="border p-3 rounded-lg w-full mt-4"
+                placeholder="Full Address"
                 value={fullAddress}
                 onChange={(e) => setFullAddress(e.target.value)}
               />
             </div>
 
-            {/* Payment Method */}
-            <div className="bg-gray-50 p-5 rounded-xl border">
+            {/* PAYMENT */}
+            <div className="bg-gray-50 p-5 border rounded-xl">
               <h3 className="text-xl font-semibold mb-5">Payment Method</h3>
 
-              <div className="space-y-4">
-                <label className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    name="payment"
-                    checked={paymentMethod === "card"}
-                    onChange={() => setPaymentMethod("card")}
-                  />
-                  <span>Credit / Debit Card</span>
-                </label>
+              <label className="flex items-center gap-3">
+                <input
+                  type="radio"
+                  checked={paymentMethod === "card"}
+                  onChange={() => setPaymentMethod("card")}
+                />
+                Credit / Debit Card
+              </label>
 
-                <label className="flex items-center gap-3">
+              {paymentMethod === "card" && (
+                <div className="p-4 mt-3 border rounded-xl bg-white space-y-3">
                   <input
-                    type="radio"
-                    name="payment"
-                    checked={paymentMethod === "cod"}
-                    onChange={() => setPaymentMethod("cod")}
+                    className="border p-3 rounded-lg w-full"
+                    placeholder="Card Number"
                   />
-                  <span>Cash on Delivery</span>
-                </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <input
+                      className="border p-3 rounded-lg"
+                      placeholder="MM/YY"
+                    />
+                    <input
+                      className="border p-3 rounded-lg"
+                      placeholder="CVV"
+                    />
+                  </div>
+                </div>
+              )}
 
-                <label className="flex items-center gap-3">
+              <label className="flex items-center gap-3 mt-3">
+                <input
+                  type="radio"
+                  checked={paymentMethod === "cod"}
+                  onChange={() => setPaymentMethod("cod")}
+                />
+                Cash On Delivery
+              </label>
+
+              <label className="flex items-center gap-3 mt-3">
+                <input
+                  type="radio"
+                  checked={paymentMethod === "upi"}
+                  onChange={() => setPaymentMethod("upi")}
+                />
+                UPI / Wallet Payment
+              </label>
+
+              {paymentMethod === "upi" && (
+                <div className="border p-5 bg-white rounded-xl mt-3 text-center">
                   <input
-                    type="radio"
-                    name="payment"
-                    checked={paymentMethod === "upi"}
-                    onChange={() => setPaymentMethod("upi")}
+                    className="border p-3 rounded-lg w-full"
+                    placeholder="Enter UPI ID (e.g., name@upi)"
                   />
-                  <span>UPI / Wallet</span>
-                </label>
-              </div>
+
+                  <p className="text-sm text-gray-500 mt-3">OR scan QR</p>
+
+                  {qrCodeURL && (
+                    <img
+                      src={qrCodeURL}
+                      className="w-48 h-48 mx-auto rounded-lg shadow mt-3"
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* RIGHT SECTION */}
+          {/* RIGHT SUMMARY */}
           <div className="bg-gray-50 p-5 rounded-xl border h-fit">
             <h3 className="text-xl font-semibold mb-5">Order Summary</h3>
+
+            {/* FREE DELIVERY */}
+            <div className="mb-4">
+              {productCount < 3 ? (
+                <p className="text-sm text-orange-600 font-medium">
+                  Add {3 - productCount} more item
+                  {3 - productCount > 1 ? "s" : ""} to unlock Free Delivery
+                </p>
+              ) : (
+                <p className="text-sm text-green-600 font-semibold">
+                  Free Delivery Unlocked 🎉
+                </p>
+              )}
+
+              <div className="w-full h-2 bg-gray-200 rounded-full mt-2 overflow-hidden">
+                <div
+                  className="h-full bg-black transition-all duration-500"
+                  style={{
+                    width: `${Math.min((productCount / 3) * 100, 100)}%`,
+                  }}
+                ></div>
+              </div>
+            </div>
 
             <div className="space-y-3">
               <div className="flex justify-between">
@@ -258,21 +349,29 @@ export default function CheckoutPage() {
 
               <div className="flex justify-between">
                 <span>Delivery Charge:</span>
-                <span>₹{deliveryCharge}</span>
+                <span
+                  className={
+                    deliveryCharge === 0 ? "text-green-600 font-semibold" : ""
+                  }
+                >
+                  {deliveryCharge === 0 ? "FREE" : `₹${deliveryCharge}`}
+                </span>
               </div>
 
-              <div className="flex justify-between font-semibold text-lg border-t pt-3">
+              <div className="flex justify-between text-lg font-semibold border-t pt-3">
                 <span>Total:</span>
                 <span>₹{total}</span>
               </div>
             </div>
 
-            {/* PAY NOW */}
             <button
               onClick={handlePayNow}
-              className="w-full mt-6 bg-black text-white py-3 rounded-lg hover:bg-gray-800 transition"
+              disabled={loading}
+              className={`w-full mt-6 py-3 rounded-lg text-white ${
+                loading ? "bg-gray-500" : "bg-black hover:bg-gray-800"
+              }`}
             >
-              Pay Now
+              {loading ? "Processing..." : "Pay Now"}
             </button>
           </div>
         </div>

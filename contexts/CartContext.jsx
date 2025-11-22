@@ -5,7 +5,7 @@ import { db } from "@/lib/firestore/firebase";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   collection,
-  getDocs,
+  onSnapshot,
   setDoc,
   deleteDoc,
   doc,
@@ -15,82 +15,60 @@ const CartContext = createContext();
 
 export const CartProvider = ({ children }) => {
   const { user } = useAuth();
-  const [cart, setCart] = useState([]);
 
-  // ---------------------------------------------
-  // Load Cart (guest → localStorage, user → Firestore)
-  // ---------------------------------------------
+  const [cart, setCart] = useState([]);
+  const [cartCount, setCartCount] = useState(0);
+
+  // REAL-TIME LISTENER
   useEffect(() => {
     if (!user) {
-      const stored = localStorage.getItem("cart");
-      if (stored) setCart(JSON.parse(stored));
+      setCart([]);
+      setCartCount(0);
       return;
     }
 
-    const loadFirestoreCart = async () => {
-      const cartRef = collection(db, "users", user.uid, "cart");
-      const snap = await getDocs(cartRef);
-
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setCart(items);
-    };
-
-    loadFirestoreCart();
-  }, [user]);
-
-  // ---------------------------------------------
-  // Save guest cart to localStorage
-  // ---------------------------------------------
-  useEffect(() => {
-    if (!user) {
-      localStorage.setItem("cart", JSON.stringify(cart));
-    }
-  }, [cart, user]);
-
-  // ---------------------------------------------
-  // Sync to Firestore for logged-in user
-  // ---------------------------------------------
-  const syncToFirestore = async (updatedCart) => {
-    if (!user) return;
-
     const cartRef = collection(db, "users", user.uid, "cart");
 
-    const snap = await getDocs(cartRef);
+    const unsubscribe = onSnapshot(cartRef, (snapshot) => {
+      const items = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
 
-    // Clear existing Firestore cart
-    await Promise.all(
-      snap.docs.map((d) => deleteDoc(doc(db, "users", user.uid, "cart", d.id)))
-    );
+      setCart(items);
 
-    // Add updated cart
-    await Promise.all(
-      updatedCart.map((item) =>
-        setDoc(doc(db, "users", user.uid, "cart", item.id), item)
-      )
-    );
+      const total = items.reduce((sum, item) => sum + item.quantity, 0);
+      setCartCount(total);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // ADD TO CART (OVERWRITE IF EXISTS)
+  const addToCart = async (product) => {
+    if (!user) return;
+
+    const itemRef = doc(db, "users", user.uid, "cart", product.id);
+
+    await setDoc(itemRef, {
+      id: product.id,
+      name: product.name,
+      image: product.image,
+      price: product.price,
+      quantity: 1,
+    });
   };
 
-  // ---------------------------------------------
-  // Update cart function
-  // ---------------------------------------------
-  const updateCart = async (newCart) => {
-    setCart(newCart);
-
-    if (user) {
-      await syncToFirestore(newCart);
-    }
+  // REMOVE ITEM
+  const removeFromCart = async (id) => {
+    if (!user) return;
+    await deleteDoc(doc(db, "users", user.uid, "cart", id));
   };
-
-  // ---------------------------------------------
-  // Cart Count (Badge number)
-  // ---------------------------------------------
-  const cartCount = cart.reduce(
-    (total, item) => total + (item.quantity || 1),
-    0
-  );
 
   return (
-    <CartContext.Provider value={{ cart, cartCount, setCart: updateCart }}>
+    <CartContext.Provider
+      value={{ cart, cartCount, addToCart, removeFromCart }}
+    >
       {children}
     </CartContext.Provider>
   );

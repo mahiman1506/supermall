@@ -7,7 +7,6 @@ import {
   BuildingIcon,
   HomeIcon,
   InfoIcon,
-  LayoutDashboardIcon,
   LogOutIcon,
   Menu,
   PhoneIcon,
@@ -35,8 +34,11 @@ import { getCategories } from "@/lib/firestore/categories/read_server";
 import Link from "next/link";
 import { getFloor } from "@/lib/firestore/floors/read_server";
 import { useCart } from "@/contexts/CartContext";
+import { usePathname } from "next/navigation";
 
 export default function UserHeader() {
+  const pathname = usePathname();
+
   const [isOpen, setIsOpen] = useState(false);
   const [showUserInfo, setShowUserInfo] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
@@ -49,60 +51,32 @@ export default function UserHeader() {
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showFloorDropdown, setShowFloorDropdown] = useState(false);
 
-  const { cartCount } = useCart(); // cart from context
+  const { cartCount } = useCart();
   const auth = getAuth(app);
   const { role } = useAuth();
 
   const userRef = useRef(null);
   const settingsRef = useRef(null);
 
-  // ⭐ Calculate TOTAL cart item quantity
-  // const totalItems = cartCount?.reduce(
-  //   (sum, item) => sum + (item.quantity || 0),
-  //   0
-  // );
-
-  // Fetch categories
   useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const data = await getCategories();
-        setCategories(data);
-      } catch (err) {
-        console.error("Error fetching categories:", err);
-      }
-    };
-    fetchCategories();
+    getCategories().then(setCategories).catch(console.error);
   }, []);
 
-  // Fetch floors
   useEffect(() => {
-    const fetchFloor = async () => {
-      try {
-        const data = await getFloor();
-        setFloor(data);
-      } catch (err) {
-        console.error("Error fetching Floor:", err);
-      }
-    };
-    fetchFloor();
+    getFloor().then(setFloor).catch(console.error);
   }, []);
 
-  // Firebase Auth Listener
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsub = onAuthStateChanged(auth, (currentUser) => {
       if (currentUser) {
         setUser({
           name: currentUser.displayName || "No Name",
           email: currentUser.email,
           photoURL: currentUser.photoURL || null,
         });
-      } else {
-        setUser(null);
-      }
+      } else setUser(null);
     });
-
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
   const handlePhotoChange = async (e) => {
@@ -122,7 +96,7 @@ export default function UserHeader() {
       await updateProfile(auth.currentUser, { photoURL: downloadURL });
       setUser((prev) => ({ ...prev, photoURL: downloadURL }));
     } catch (error) {
-      console.error("Error uploading image:", error);
+      console.error(error);
     }
 
     setUploading(false);
@@ -141,7 +115,6 @@ export default function UserHeader() {
     }
   };
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (
@@ -154,49 +127,18 @@ export default function UserHeader() {
         setShowLogout(false);
       }
     };
-
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const menuList = [
-    { id: 1, name: "Home", link: "/", icon: <HomeIcon className="h-5 w-5" /> },
-    {
-      id: 2,
-      name: "Store",
-      link: "/store",
-      icon: <StoreIcon className="h-5 w-5" />,
-    },
-    {
-      id: 3,
-      name: "Category",
-      link: "",
-      icon: <TagsIcon className="h-5 w-5" />,
-    },
-    {
-      id: 4,
-      name: "Floor",
-      link: "/floor",
-      icon: <Building2Icon className="h-5 w-5" />,
-    },
-    {
-      id: 5,
-      name: "Offers",
-      link: "/offers",
-      icon: <BadgePercentIcon className="h-5 w-5" />,
-    },
-    {
-      id: 6,
-      name: "About",
-      link: "/about",
-      icon: <InfoIcon className="h-5 w-5" />,
-    },
-    {
-      id: 7,
-      name: "Contact Us",
-      link: "/contact-us",
-      icon: <PhoneIcon className="h-5 w-5" />,
-    },
+    { id: 1, name: "Home", link: "/" },
+    { id: 2, name: "Store", link: "/store" },
+    { id: 3, name: "Category", link: "" },
+    { id: 4, name: "Floor", link: "/floor" },
+    { id: 5, name: "Offers", link: "/offers" },
+    { id: 6, name: "About", link: "/about" },
+    { id: 7, name: "Contact Us", link: "/contact-us" },
   ];
 
   return (
@@ -211,48 +153,73 @@ export default function UserHeader() {
       <nav className="hidden md:flex gap-8 items-center absolute left-1/2 -translate-x-1/2">
         {menuList.map((item) => (
           <div key={item.id} className="relative">
-            {item.name === "Category" || item.name === "Floor" ? (
+            {/* CATEGORY */}
+            {item.name === "Category" && (
               <>
                 <button
                   onClick={() => {
-                    if (item.name === "Category") {
-                      setShowCategoryDropdown((prev) => !prev);
-                      setShowFloorDropdown(false);
-                    } else {
-                      setShowFloorDropdown((prev) => !prev);
-                      setShowCategoryDropdown(false);
-                    }
+                    setShowCategoryDropdown((p) => !p);
+                    setShowFloorDropdown(false);
                   }}
-                  className="text-white font-semibold hover:underline"
+                  className={`font-semibold ${
+                    pathname.startsWith("/category")
+                      ? "text-yellow-300 font-bold underline"
+                      : "text-white"
+                  }`}
                 >
-                  {item.name}
+                  Category
                 </button>
 
-                {/* CATEGORY DROPDOWN */}
-                {item.name === "Category" && showCategoryDropdown && (
+                {showCategoryDropdown && (
                   <div className="absolute top-full left-0 mt-2 bg-white shadow-lg rounded-lg p-2 min-w-[200px] z-50">
                     {categories.map((cat) => (
                       <Link
                         key={cat.id}
                         href={`/category/${cat.id}`}
+                        className={`block px-3 py-2 rounded-md hover:bg-gray-100 ${
+                          pathname === `/category/${cat.id}`
+                            ? "bg-gray-200 font-bold"
+                            : ""
+                        }`}
                         onClick={() => setShowCategoryDropdown(false)}
-                        className="block px-3 py-2 hover:bg-gray-100 rounded-md"
                       >
                         {cat.name}
                       </Link>
                     ))}
                   </div>
                 )}
+              </>
+            )}
 
-                {/* FLOOR DROPDOWN */}
-                {item.name === "Floor" && showFloorDropdown && (
+            {/* FLOOR */}
+            {item.name === "Floor" && (
+              <>
+                <button
+                  onClick={() => {
+                    setShowFloorDropdown((p) => !p);
+                    setShowCategoryDropdown(false);
+                  }}
+                  className={`font-semibold ${
+                    pathname.startsWith("/floor")
+                      ? "text-yellow-300 font-bold underline"
+                      : "text-white"
+                  }`}
+                >
+                  Floor
+                </button>
+
+                {showFloorDropdown && (
                   <div className="absolute top-full left-0 mt-2 bg-white shadow-lg rounded-lg p-2 min-w-[200px] z-50">
                     {floor.map((f) => (
                       <Link
                         key={f.id}
                         href={`/floor/${f.id}`}
+                        className={`block px-3 py-2 rounded-md hover:bg-gray-100 ${
+                          pathname === `/floor/${f.id}`
+                            ? "bg-gray-200 font-bold"
+                            : ""
+                        }`}
                         onClick={() => setShowFloorDropdown(false)}
-                        className="block px-3 py-2 hover:bg-gray-100 rounded-md"
                       >
                         {f.name}
                       </Link>
@@ -260,27 +227,47 @@ export default function UserHeader() {
                   </div>
                 )}
               </>
-            ) : (
-              <Link href={item.link} className="text-white hover:underline">
+            )}
+
+            {/* REGULAR MENU ITEMS */}
+            {item.name !== "Category" && item.name !== "Floor" && (
+              <Link
+                href={item.link}
+                className={`${
+                  pathname === item.link
+                    ? "text-yellow-300 font-bold underline"
+                    : "text-white"
+                } hover:underline`}
+              >
                 {item.name}
               </Link>
             )}
           </div>
         ))}
 
+        {/* ADMIN */}
         {role === "admin" && (
           <Link
             href="/admin"
-            className="text-white font-semibold hover:underline"
+            className={`${
+              pathname.startsWith("/admin")
+                ? "text-yellow-300 font-bold underline"
+                : "text-white"
+            }`}
           >
             Admin Panel
           </Link>
         )}
 
+        {/* SHOP */}
         {role === "shop" && (
           <Link
             href="/shop"
-            className="text-white font-semibold hover:underline"
+            className={`${
+              pathname.startsWith("/shop")
+                ? "text-yellow-300 font-bold underline"
+                : "text-white"
+            }`}
           >
             Shop Panel
           </Link>
@@ -289,29 +276,24 @@ export default function UserHeader() {
 
       {/* RIGHT SECTION */}
       <div className="flex items-center gap-3">
-        {/* ⭐ DESKTOP CART ICON (Correct Total Count) */}
-        <div className="hidden md:flex relative items-center gap-3">
-          {/* ⭐ DESKTOP CART ICON */}
-          <div className="relative">
-            <Link href="/cart">
-              <ShoppingCartIcon className="w-6 h-6 text-white" />
-
-              {cartCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
-                  {cartCount}
-                </span>
-              )}
-            </Link>
-          </div>
+        {/* DESKTOP CART */}
+        <div className="hidden md:flex relative">
+          <Link href="/cart">
+            <ShoppingCartIcon className="w-6 h-6 text-white" />
+            {cartCount > 0 && (
+              <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                {cartCount}
+              </span>
+            )}
+          </Link>
         </div>
 
-        {/* USER + SETTINGS (DESKTOP) */}
+        {/* USER (DESKTOP) */}
         <div className="hidden md:flex items-center gap-4">
           {user ? (
             <>
-              {/* USER DROPDOWN */}
               <div ref={userRef} className="relative">
-                <button onClick={() => setShowUserInfo((prev) => !prev)}>
+                <button onClick={() => setShowUserInfo((p) => !p)}>
                   <UserIcon className="h-6 w-6 text-white cursor-pointer" />
                 </button>
 
@@ -321,10 +303,10 @@ export default function UserHeader() {
                       {user.photoURL ? (
                         <img
                           src={user.photoURL}
-                          className="w-12 h-12 rounded-full object-cover shadow"
+                          className="w-12 h-12 rounded-full object-cover"
                         />
                       ) : (
-                        <div className="w-12 h-12 bg-gray-300 rounded-full flex justify-center items-center text-lg font-bold">
+                        <div className="w-12 h-12 bg-gray-300 rounded-full flex justify-center items-center font-bold">
                           {user.name?.charAt(0)}
                         </div>
                       )}
@@ -335,7 +317,6 @@ export default function UserHeader() {
                       </div>
                     </div>
 
-                    {/* Edit name */}
                     {!isEditing ? (
                       <button
                         onClick={() => {
@@ -370,9 +351,8 @@ export default function UserHeader() {
                       </>
                     )}
 
-                    {/* Change photo */}
-                    <label className="text-sm cursor-pointer mt-3 block underline">
-                      Change Image
+                    <label className="mt-3 underline cursor-pointer block">
+                      Change Photo
                       <input
                         type="file"
                         className="hidden"
@@ -384,17 +364,25 @@ export default function UserHeader() {
                 )}
               </div>
 
-              {/* SETTINGS DROPDOWN */}
               <div ref={settingsRef} className="relative">
-                <button onClick={() => setShowLogout((prev) => !prev)}>
+                <button onClick={() => setShowLogout((p) => !p)}>
                   <SettingsIcon className="h-6 w-6 text-white cursor-pointer" />
                 </button>
 
                 {showLogout && (
-                  <div className="absolute right-0 top-12 bg-white shadow-md rounded-lg p-2 w-32">
+                  <div className="absolute right-0 top-12 bg-white shadow-md rounded-lg p-2 w-40">
+                    <Link
+                      href="/dashboard"
+                      className="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 rounded text-blue-600 font-medium"
+                      onClick={() => setShowLogout(false)}
+                    >
+                      <HomeIcon className="h-5 w-5" />
+                      Dashboard
+                    </Link>
+
                     <button
                       onClick={handleLogout}
-                      className="flex items-center text-red-500 gap-2 px-3 py-2 w-full hover:bg-gray-100 rounded"
+                      className="flex items-center text-red-500 gap-2 px-3 py-2 hover:bg-gray-100 rounded"
                     >
                       <LogOutIcon className="h-5 w-5" />
                       Logout
@@ -405,21 +393,20 @@ export default function UserHeader() {
             </>
           ) : (
             <Link href="/login">
-              <button className="bg-white text-slate-800 px-4 py-2 rounded-lg font-semibold hover:bg-slate-700 hover:text-white shadow">
+              <button className="bg-white text-black px-4 py-2 rounded-lg font-semibold">
                 Login
               </button>
             </Link>
           )}
         </div>
 
-        {/* ⭐ MOBILE CART ICON */}
+        {/* MOBILE CART */}
         <div className="md:hidden mr-2">
           <Link href="/cart">
             <button className="relative">
               <ShoppingCartIcon className="h-6 w-6 text-white" />
-
               {cartCount > 0 && (
-                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold px-2 py-0.5 rounded-full">
+                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs font-bold px-2 rounded-full">
                   {cartCount}
                 </span>
               )}
@@ -427,7 +414,7 @@ export default function UserHeader() {
           </Link>
         </div>
 
-        {/* MOBILE HAMBURGER */}
+        {/* MOBILE MENU BUTTON */}
         <button
           className="md:hidden text-white"
           onClick={() => setIsOpen(!isOpen)}
@@ -436,12 +423,12 @@ export default function UserHeader() {
         </button>
       </div>
 
-      {/* SIDEBAR OVERLAY */}
+      {/* OVERLAY */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-40"
           onClick={() => setIsOpen(false)}
-        />
+        ></div>
       )}
 
       {/* MOBILE SIDEBAR */}
@@ -450,17 +437,14 @@ export default function UserHeader() {
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        {/* SIDEBAR HEADER */}
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-semibold flex gap-2">
-            <BuildingIcon className="h-8 w-8" />
-            Super Mall
+            <BuildingIcon className="h-8 w-8" /> Super Mall
           </h2>
-
           <X className="cursor-pointer" onClick={() => setIsOpen(false)} />
         </div>
 
-        {/* USER BOX (MOBILE) */}
+        {/* USER BOX */}
         {user && (
           <div className="bg-slate-700 rounded-xl p-4 mb-4">
             <div className="flex flex-col items-center gap-2">
@@ -470,8 +454,8 @@ export default function UserHeader() {
                   className="w-16 h-16 rounded-full object-cover border-2 border-white shadow"
                 />
               ) : (
-                <div className="w-16 h-16 bg-gray-300 rounded-full flex justify-center items-center text-xl font-bold text-gray-700">
-                  {user.name?.charAt(0) || "U"}
+                <div className="w-16 h-16 bg-gray-300 rounded-full flex justify-center items-center font-bold text-gray-700">
+                  {user.name?.charAt(0)}
                 </div>
               )}
 
@@ -518,14 +502,18 @@ export default function UserHeader() {
 
         {/* MOBILE MENU */}
         <nav className="flex flex-col gap-4">
-          {/* Category */}
+          {/* CATEGORY */}
           <div>
             <button
               onClick={() => {
-                setShowCategoryDropdown((prev) => !prev);
+                setShowCategoryDropdown((p) => !p);
                 setShowFloorDropdown(false);
               }}
-              className="flex justify-between w-full text-lg"
+              className={`flex justify-between w-full text-lg ${
+                pathname.startsWith("/category")
+                  ? "text-yellow-300 font-bold underline"
+                  : ""
+              }`}
             >
               Category {showCategoryDropdown ? "▲" : "▼"}
             </button>
@@ -536,8 +524,12 @@ export default function UserHeader() {
                   <Link
                     key={cat.id}
                     href={`/category/${cat.id}`}
+                    className={`py-1 underline ${
+                      pathname === `/category/${cat.id}`
+                        ? "text-yellow-300 font-bold"
+                        : ""
+                    }`}
                     onClick={() => setIsOpen(false)}
-                    className="py-1 underline"
                   >
                     {cat.name}
                   </Link>
@@ -546,14 +538,18 @@ export default function UserHeader() {
             )}
           </div>
 
-          {/* Floor */}
+          {/* FLOOR */}
           <div>
             <button
               onClick={() => {
-                setShowFloorDropdown((prev) => !prev);
+                setShowFloorDropdown((p) => !p);
                 setShowCategoryDropdown(false);
               }}
-              className="flex justify-between w-full text-lg"
+              className={`flex justify-between w-full text-lg ${
+                pathname.startsWith("/floor")
+                  ? "text-yellow-300 font-bold underline"
+                  : ""
+              }`}
             >
               Floor {showFloorDropdown ? "▲" : "▼"}
             </button>
@@ -564,8 +560,12 @@ export default function UserHeader() {
                   <Link
                     key={f.id}
                     href={`/floor/${f.id}`}
+                    className={`py-1 underline ${
+                      pathname === `/floor/${f.id}`
+                        ? "text-yellow-300 font-bold"
+                        : ""
+                    }`}
                     onClick={() => setIsOpen(false)}
-                    className="py-1 underline"
                   >
                     {f.name}
                   </Link>
@@ -574,28 +574,44 @@ export default function UserHeader() {
             )}
           </div>
 
-          {/* Normal menu items */}
+          {/* NORMAL ITEMS */}
           {menuList
             .filter((m) => m.name !== "Category" && m.name !== "Floor")
             .map((item) => (
               <Link
                 key={item.id}
                 href={item.link}
+                className={`text-lg underline ${
+                  pathname === item.link ? "text-yellow-300 font-bold" : ""
+                }`}
                 onClick={() => setIsOpen(false)}
-                className="text-lg underline"
               >
                 {item.name}
               </Link>
             ))}
 
+          {/* ADMIN */}
           {role === "admin" && (
-            <Link href="/admin" className="text-lg underline">
+            <Link
+              href="/admin"
+              className={`text-lg underline ${
+                pathname.startsWith("/admin") ? "text-yellow-300 font-bold" : ""
+              }`}
+              onClick={() => setIsOpen(false)}
+            >
               Admin Panel
             </Link>
           )}
 
+          {/* SHOP */}
           {role === "shop" && (
-            <Link href="/shop" className="text-lg underline">
+            <Link
+              href="/shop"
+              className={`text-lg underline ${
+                pathname.startsWith("/shop") ? "text-yellow-300 font-bold" : ""
+              }`}
+              onClick={() => setIsOpen(false)}
+            >
               Shop Panel
             </Link>
           )}

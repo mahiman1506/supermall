@@ -12,11 +12,13 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firestore/firebase";
+import { useRouter } from "next/navigation";
 
 export default function CartPage() {
   const { user } = useAuth();
   const [cart, setCart] = useState([]);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   // ----------------------------------------------------
   // ✅ FETCH CART DATA FROM FIRESTORE
@@ -87,6 +89,7 @@ export default function CartPage() {
 
           <Link
             href="/"
+            onClick={() => router.refresh()}
             className="inline-block mt-6 bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-6 rounded-lg shadow transition"
           >
             Go Back Home
@@ -102,6 +105,7 @@ export default function CartPage() {
         {/* Go Back Button */}
         <Link
           href="/"
+          onClick={() => router.refresh()}
           className="inline-flex items-center gap-2 mb-6 text-gray-700 hover:text-black transition"
         >
           <ArrowLeft className="w-5 h-5" />

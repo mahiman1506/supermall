@@ -1,153 +1,178 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { collection, doc, getDoc, getDocs } from "firebase/firestore";
-import { useParams } from "next/navigation";
-import { db } from "@/lib/firestore/firebase";
-import { ArrowLeftCircleIcon, HomeIcon } from "lucide-react";
+import UserHeader from "../../components/Header";
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  query,
+  where,
+} from "firebase/firestore";
+import { app } from "@/lib/firestore/firebase";
+import { useRouter, useParams } from "next/navigation";
+import { useAuth } from "@/contexts/AuthContext";
 import Link from "next/link";
 
-export default function ShopDetails() {
-    const { id } = useParams();
-    const [shop, setShop] = useState(null);
-    const [categories, setCategories] = useState([]);
-    const [floor, setFloor] = useState([]);
+export default function ShopDetailsPage() {
+  const { id: shopId } = useParams(); // ⭐ dynamic shopId
+  const [shop, setShop] = useState(null);
+  const [categories, setCategories] = useState([]);
 
-    const getCategoryName = (id) =>
-        categories?.find((cat) => cat.id === id)?.name || "Unknown";
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-    const getFloorName = (id) =>
-        floor?.find((floor) => floor.id === id)?.name || "Unknown";
+  const { user, loading: authLoading } = useAuth();
+  const router = useRouter();
 
-    useEffect(() => {
-        const fetchShop = async () => {
-            try {
-                const docRef = doc(db, "shop", id);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) setShop(docSnap.data());
-                else console.error("Shop not found");
-            } catch (error) {
-                console.error("Error fetching shop:", error);
-            }
-        };
-        fetchShop();
-    }, [id]);
+  const db = getFirestore(app);
 
-    useEffect(() => {
-        const fetchCategory = async () => {
-            try {
-                const categoriesSnapshot = await getDocs(collection(db, "categories"));
-                const categoriesData = categoriesSnapshot.docs.map((doc) => ({
-                    id: doc.id,
-                    ...doc.data(),
-                }));
-                setCategories(categoriesData);
-            } catch (error) {
-                console.error("Error fetching category:", error);
-            }
-        };
-        fetchCategory();
-    }, []);
+  const getCategoryName = (id) =>
+    categories?.find((cat) => cat.id === id)?.name || "Unknown";
 
-    useEffect(() => {
-        const fetchFloor = async () => {
-            try {
-                const floorSnapshot = await getDocs(collection(db, "floors"));
-                const floorData = floorSnapshot.docs.map((doc) => ({
-                    id: doc.id,
-                    ...doc.data(),
-                }));
-                setFloor(floorData);
-            } catch (error) {
-                console.error("Error fetching Floor:", error);
-            }
-        };
-        fetchFloor();
-    }, []);
+  // -------------------------
+  // FETCH SHOP + CATEGORIES
+  // -------------------------
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        // Fetch Shop Data
+        const shopSnap = await getDocs(collection(db, "shop"));
+        const shops = shopSnap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        const foundShop = shops.find((s) => s.id === shopId);
+        setShop(foundShop || null);
 
-    if (!shop) return <div className="text-center py-10 text-gray-500">Loading...</div>;
+        // Fetch categories
+        const catSnap = await getDocs(collection(db, "categories"));
+        setCategories(
+          catSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+        );
+      } catch (err) {
+        console.error("Error loading shop:", err);
+      }
+    };
 
+    fetchData();
+  }, [shopId]);
+
+  // -------------------------
+  // FETCH PRODUCTS FOR SHOP
+  // -------------------------
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const qRef = query(
+          collection(db, "products"),
+          where("shopId", "==", shopId)
+        );
+
+        const prodSnap = await getDocs(qRef);
+        const prodData = prodSnap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+
+        setProducts(prodData);
+      } catch (error) {
+        console.error("Error fetching products:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (shopId) fetchProducts();
+  }, [shopId]);
+
+  if (!shop) {
     return (
-        <main className="bg-gradient-to-tr from-indigo-200 to-blue-600 p-6">
-            <div className="bg-white rounded-xl">
-                {/* ✅ Banner Image */}
-                {shop.bannerImageURL && (
-                    <div className="w-full flex items-center justify-center h-36 rounded-xl overflow-hidden shadow-md mb-8">
-                        <img
-                            src={shop.bannerImageURL}
-                            alt="Banner"
-                            className="h-32 object-center object-cover"
-                        />
-                    </div>
-                )}
-            </div>
-
-            {/* ✅ Two-Column Layout */}
-            <div className="flex flex-col md:flex-row gap-8">
-                {/* ✅ Left: Images */}
-                <div className="w-full md:w-1/2">
-                    {shop.images?.length > 0 && (
-                        <div className="w-full rounded-xl overflow-hidden shadow-md bg-white p-4">
-                            <h3 className="font-semibold text-lg mb-4 text-center">Gallery</h3>
-                            <div className="flex flex-wrap items-center justify-center gap-4">
-                                {shop.images.map((img, i) => (
-                                    <div
-                                        key={i}
-                                        className="rounded-lg overflow-hidden transition-all duration-300"
-                                    >
-                                        <div className="flex items-center justify-center">
-                                            <img
-                                                src={img}
-                                                alt={`Gallery ${i}`}
-                                                className="h-32 object-cover object-center hover:scale-105 transition-transform duration-300"
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                {/* ✅ Right: Details */}
-                <div className="w-full md:w-1/2 space-y-6">
-                    <div className="bg-white rounded-xl shadow-md p-5">
-                        <div className="flex flex-col items-center">
-                            {shop.logoURL && (
-                                <img
-                                    src={shop.logoURL}
-                                    alt="Logo"
-                                    className="w-24 object-cover"
-                                />
-                            )}
-                            <h2 className="text-2xl font-semibold mt-4">{shop.name}</h2>
-                            <p className="text-gray-500">{getCategoryName(shop.category)}</p>
-                        </div>
-
-                        <div className="mt-6 text-sm text-gray-600 space-y-1">
-                            <p><b>Owner:</b> {shop.ownerName}</p>
-                            <p><b>Shop No:</b> {shop.shopNumber}</p>
-                            <p><b>Floor:</b> {getFloorName(shop.floor)}</p>
-                            <p><b>Contact:</b> {shop.contactNumber}</p>
-                            <p><b>Email:</b> {shop.email}</p>
-                        </div>
-                    </div>
-
-                    {/* ✅ Description */}
-                    <div className="bg-white rounded-xl shadow-md p-5">
-                        <h3 className="font-semibold mb-2 text-lg">Description</h3>
-                        <p className="text-gray-700">{shop.description}</p>
-                    </div>
-                </div>
-            </div>
-
-            <div className="flex items-center justify-center p-10">
-                <Link href={"/store"}>
-                    <button className="flex gap-2 cursor-pointer bg-black text-white px-4 py-2 rounded-2xl">
-                        <span><ArrowLeftCircleIcon /></span>Go Back
-                    </button>
-                </Link>
-            </div>
-        </main>
+      <main className="min-h-screen flex justify-center items-center text-xl">
+        Shop Not Found
+      </main>
     );
+  }
+
+  return (
+    <main className="min-h-screen bg-gray-50">
+      <UserHeader />
+
+      <section className="max-w-7xl mx-auto px-4 py-10">
+        <h1 className="text-3xl font-bold mb-6 text-gray-800">{shop.name}</h1>
+
+        {/* SHOP DETAILS */}
+        <div className="bg-white shadow rounded-xl p-6 mb-10">
+          <div className="flex gap-4 items-center">
+            <img
+              src={shop.logoURL || "/default-shop.png"}
+              alt={shop.name}
+              className="w-24 object-cover rounded-lg"
+            />
+            <div>
+              <h2 className="text-xl font-semibold">{shop.name}</h2>
+              <p className="text-gray-600">{getCategoryName(shop.category)}</p>
+              <p className="text-gray-500 mt-1">Location: {shop.location}</p>
+            </div>
+          </div>
+
+          {/* Banner */}
+          {shop.bannerImage && (
+            <div className="mt-4">
+              <img
+                src={shop.bannerImage}
+                alt="shop banner"
+                className="w-full rounded-xl"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* -------------------------------------- */}
+        {/* ⭐ LIST OF PRODUCTS FOR THIS SHOP ⭐ */}
+        {/* -------------------------------------- */}
+        <h2 className="text-2xl font-semibold mb-4">Products</h2>
+
+        {loading ? (
+          <div className="flex justify-center py-10">
+            <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        ) : products.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
+            {products.map((product) => (
+              <div
+                key={product.id}
+                className="bg-white rounded-xl shadow p-4 hover:shadow-lg transition"
+              >
+                {/* Image */}
+                <img
+                  src={product.mainImageURL || "/placeholder.png"}
+                  alt={product.name}
+                  className="w-full h-32 object-cover rounded"
+                />
+
+                <div className="mt-3">
+                  <h3 className="font-semibold truncate">{product.name}</h3>
+                  <p className="text-gray-500 text-sm">
+                    ₹ {product.price?.toLocaleString()}
+                  </p>
+
+                  <Link
+                    href={`/product/${product.id}`}
+                    className="mt-3 block bg-blue-600 text-white text-center py-1.5 rounded hover:bg-blue-700 transition text-sm"
+                  >
+                    View Details
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-gray-500 py-10">
+            No products found for this shop.
+          </p>
+        )}
+      </section>
+    </main>
+  );
 }
